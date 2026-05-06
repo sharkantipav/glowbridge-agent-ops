@@ -36,6 +36,21 @@ def _client() -> httpx.Client:
     )
 
 
+class VapiError(Exception):
+    def __init__(self, status: int, body: str, url: str):
+        self.status = status
+        self.body = body
+        self.url = url
+        super().__init__(f"Vapi {status} from {url}: {body[:500]}")
+
+
+def _post(client: httpx.Client, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    r = client.post(path, json=payload)
+    if r.status_code >= 400:
+        raise VapiError(r.status_code, r.text, str(r.url))
+    return r.json()
+
+
 def build_system_prompt(company_name: str, call_flow: dict[str, Any]) -> str:
     """Assemble a system prompt for Vapi from our call_flow_draft JSON.
 
@@ -117,9 +132,7 @@ def create_assistant(*, company_name: str, call_flow: dict[str, Any], server_url
             payload["serverUrlSecret"] = s.vapi_webhook_secret
 
     with _client() as c:
-        r = c.post("/assistant", json=payload)
-        r.raise_for_status()
-        return r.json()
+        return _post(c, "/assistant", payload)
 
 
 def create_phone_number(*, assistant_id: str, area_code: str | None = None) -> dict[str, Any]:
@@ -134,8 +147,27 @@ def create_phone_number(*, assistant_id: str, area_code: str | None = None) -> d
         payload["areaCode"] = area_code
 
     with _client() as c:
-        r = c.post("/phone-number", json=payload)
-        r.raise_for_status()
+        return _post(c, "/phone-number", payload)
+
+
+def attach_existing_number(*, phone_number_id: str, assistant_id: str) -> dict[str, Any]:
+    """Bind an already-provisioned Vapi phone number to an assistant.
+
+    Use this when the customer creates a number manually in the Vapi dashboard
+    (e.g. because programmatic provisioning failed due to billing).
+    """
+    with _client() as c:
+        r = c.patch(f"/phone-number/{phone_number_id}", json={"assistantId": assistant_id})
+        if r.status_code >= 400:
+            raise VapiError(r.status_code, r.text, str(r.url))
+        return r.json()
+
+
+def list_phone_numbers() -> list[dict[str, Any]]:
+    with _client() as c:
+        r = c.get("/phone-number")
+        if r.status_code >= 400:
+            raise VapiError(r.status_code, r.text, str(r.url))
         return r.json()
 
 

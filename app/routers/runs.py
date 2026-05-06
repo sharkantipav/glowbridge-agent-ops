@@ -90,6 +90,22 @@ Reply ONLY with JSON.
 
     try:
         phone = vapi_int.create_phone_number(assistant_id=assistant["id"], area_code=area_code)
+    except vapi_int.VapiError as e:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "stage": "phone_number_provisioning",
+                "assistant_id": assistant["id"],
+                "vapi_status": e.status,
+                "vapi_body": e.body,
+                "hint": (
+                    "If body says billing/payment required: open https://dashboard.vapi.ai → "
+                    "Phone Numbers → 'Buy Number'. Once a number exists in the dashboard, attach "
+                    f"it to assistant {assistant['id']} (UI 'Inbound Settings' → set assistant), "
+                    "or call POST /runs/attach-test-number with phone_number_id."
+                ),
+            },
+        ) from e
     except Exception as e:
         raise HTTPException(
             status_code=502,
@@ -123,6 +139,52 @@ Reply ONLY with JSON.
             "vapi.update_assistant() in code."
         ),
     }
+
+
+@router.post("/attach-test-number")
+def attach_test_number(
+    phone_number_id: str = Body(..., embed=True),
+    assistant_id: str = Body(..., embed=True),
+    customer_id: str | None = Body(None, embed=True),
+):
+    """Attach an already-provisioned Vapi number (from the dashboard) to an assistant.
+
+    Useful when programmatic /phone-number creation fails due to Vapi billing.
+    Look up the phone_number_id in https://dashboard.vapi.ai → Phone Numbers.
+    """
+    from app.integrations import vapi as vapi_int
+    try:
+        result = vapi_int.attach_existing_number(
+            phone_number_id=phone_number_id, assistant_id=assistant_id,
+        )
+    except vapi_int.VapiError as e:
+        raise HTTPException(
+            status_code=502, detail={"vapi_status": e.status, "vapi_body": e.body},
+        ) from e
+
+    phone_str = result.get("number")
+    if customer_id:
+        db.update(
+            "customers",
+            customer_id,
+            {
+                "vapi_assistant_id": assistant_id,
+                "vapi_phone_number": phone_str,
+                "vapi_provisioned_at": "now()",
+                "status": "test_call_approved",
+            },
+        )
+    return {"ok": True, "phone_number": phone_str, "assistant_id": assistant_id}
+
+
+@router.get("/list-vapi-numbers")
+def list_vapi_numbers():
+    """List Vapi-side phone numbers (any state) — useful for finding the id to attach."""
+    from app.integrations import vapi as vapi_int
+    try:
+        return {"numbers": vapi_int.list_phone_numbers()}
+    except vapi_int.VapiError as e:
+        raise HTTPException(status_code=502, detail={"vapi_status": e.status, "vapi_body": e.body}) from e
 
 
 @router.post("/{agent}")
