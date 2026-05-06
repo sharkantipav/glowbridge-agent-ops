@@ -18,4 +18,6 @@ COPY supabase ./supabase
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Shell form so $PORT (set by Railway/Fly/etc.) is expanded at runtime.
+# Falls back to 8000 for plain `docker run` without -e PORT.
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
