@@ -150,12 +150,15 @@
   </section>
 </main>
 <script>
-  // If the URL has ?token=..., capture it into localStorage and remove it from
-  // the visible URL so refreshes work without leaking the token in browser history.
+  // If the URL has ?token=..., capture it into a cookie + localStorage and clean
+  // the URL so refreshes work without leaking the token in browser history.
   (function captureTokenFromUrl() {
     const params = new URLSearchParams(location.search);
     const t = params.get('token');
     if (t) {
+      // 30-day cookie. Path=/ so the same token authenticates every admin endpoint.
+      // SameSite=Strict prevents CSRF. (Add `Secure` once you deploy behind HTTPS.)
+      document.cookie = `glowbridge_admin_token=${encodeURIComponent(t)}; path=/; max-age=2592000; samesite=strict`;
       localStorage.setItem('glowbridge_admin_token', t);
       params.delete('token');
       const clean = location.pathname + (params.toString() ? '?' + params.toString() : '');

@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
+
 from fastapi.templating import Jinja2Templates
 
 from app import db
@@ -18,13 +19,20 @@ templates = Jinja2Templates(directory="app/templates")
 # single-page admin dashboard.
 templates.env.cache = None
 
+ADMIN_COOKIE = "glowbridge_admin_token"
+COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
+
 
 def _since_iso(hours: int = 24) -> str:
     return (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
 
 
 @router.get("/admin", response_class=HTMLResponse)
-def admin_dashboard(request: Request, _: None = Depends(require_admin)):
+def admin_dashboard(
+    request: Request,
+    token: str | None = Query(None),
+    _: None = Depends(require_admin),
+):
     since = _since_iso(24)
 
     # Stats
@@ -67,7 +75,7 @@ def admin_dashboard(request: Request, _: None = Depends(require_admin)):
         db.db().table("unsubscribes").select("id", count="exact").execute().count or 0
     )
 
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request,
         "admin.html",
         {
@@ -80,6 +88,18 @@ def admin_dashboard(request: Request, _: None = Depends(require_admin)):
             "unsub_count": unsub_count,
         },
     )
+    # If the token came in via ?token=..., persist it as a cookie so refreshes work
+    # without re-pasting the token. Server-side Set-Cookie works for non-JS clients too.
+    if token:
+        response.set_cookie(
+            ADMIN_COOKIE,
+            token,
+            max_age=COOKIE_MAX_AGE,
+            httponly=False,  # JS reads it for action buttons (Approve/Reject)
+            samesite="strict",
+            # secure=True is added at the reverse proxy / Railway level once HTTPS is on.
+        )
+    return response
 
 
 @router.get("/admin/health")
