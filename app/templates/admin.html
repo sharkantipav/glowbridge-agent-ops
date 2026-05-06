@@ -150,6 +150,19 @@
   </section>
 </main>
 <script>
+  // If the URL has ?token=..., capture it into localStorage and remove it from
+  // the visible URL so refreshes work without leaking the token in browser history.
+  (function captureTokenFromUrl() {
+    const params = new URLSearchParams(location.search);
+    const t = params.get('token');
+    if (t) {
+      localStorage.setItem('glowbridge_admin_token', t);
+      params.delete('token');
+      const clean = location.pathname + (params.toString() ? '?' + params.toString() : '');
+      history.replaceState(null, '', clean);
+    }
+  })();
+
   // Approve / Reject buttons. Reads admin token from localStorage; prompts once.
   document.querySelectorAll('.row-actions button').forEach(btn => {
     btn.addEventListener('click', async () => {

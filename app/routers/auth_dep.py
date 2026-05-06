@@ -1,15 +1,34 @@
-"""Bearer-token auth for admin endpoints."""
+"""Bearer-token auth for admin endpoints.
+
+Accepts the token in either:
+  1. `Authorization: Bearer <token>` header (preferred — used by curl, the dashboard JS, CI).
+  2. `?token=<token>` query string (fallback — lets you paste an admin URL into a browser).
+
+The query-param path is convenient for local-dev / first-boot; in production you'd
+want a small login page that sets a cookie. Fine for v1.
+"""
 from __future__ import annotations
 
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, Query, status
 
 from app.config import get_settings
 
 
-def require_admin(authorization: str = Header(None)) -> None:
+def require_admin(
+    authorization: str = Header(None),
+    token: str | None = Query(None, description="Admin token (fallback for browser GETs)"),
+) -> None:
     s = get_settings()
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing bearer token")
-    token = authorization.removeprefix("Bearer ").strip()
-    if token != s.admin_token:
+    presented: str | None = None
+    if authorization and authorization.startswith("Bearer "):
+        presented = authorization.removeprefix("Bearer ").strip()
+    elif token:
+        presented = token.strip()
+
+    if not presented:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="missing bearer token (or ?token=...)",
+        )
+    if presented != s.admin_token:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid token")

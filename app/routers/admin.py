@@ -12,6 +12,11 @@ from app.routers.auth_dep import require_admin
 
 router = APIRouter(tags=["admin"])
 templates = Jinja2Templates(directory="app/templates")
+# Disable Jinja2's LRU template cache: with Python 3.14 and Jinja2 3.1.6, the
+# cache key includes the request globals dict (unhashable), which crashes the
+# default LRU lookup. Templates re-load from disk on every render — fine for a
+# single-page admin dashboard.
+templates.env.cache = None
 
 
 def _since_iso(hours: int = 24) -> str:
@@ -63,9 +68,9 @@ def admin_dashboard(request: Request, _: None = Depends(require_admin)):
     )
 
     return templates.TemplateResponse(
+        request,
         "admin.html",
         {
-            "request": request,
             "runs_by_agent": runs_by_agent,
             "pending_approvals": pending_approvals,
             "recent_outreach": recent_outreach,
