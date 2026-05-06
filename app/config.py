@@ -1,7 +1,18 @@
+import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Local-dev nicety: if a .env file exists in the project root, let it override
+# any stale OS environment variables. Prevents the classic "I set MY_KEY in .env
+# but Windows has an empty MY_KEY env var from years ago" footgun. In production
+# (Railway/Fly), no .env file exists, so this no-ops and OS env wins as expected.
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path, override=True)
 
 
 class Settings(BaseSettings):
