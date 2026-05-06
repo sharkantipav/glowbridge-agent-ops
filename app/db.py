@@ -1,0 +1,124 @@
+"""Supabase client + thin typed helpers.
+
+The backend uses the service-role key, so it bypasses RLS. Never import
+this module from anywhere that could be reached by an unauthenticated
+HTTP request without an admin check.
+"""
+from __future__ import annotations
+
+from functools import lru_cache
+from typing import Any
+
+from supabase import Client, create_client
+
+from app.config import get_settings
+
+
+@lru_cache
+def db() -> Client:
+    s = get_settings()
+    return create_client(s.supabase_url, s.supabase_service_role_key)
+
+
+# ---------- Generic helpers ----------
+
+def insert(table: str, row: dict[str, Any]) -> dict[str, Any]:
+    res = db().table(table).insert(row).execute()
+    return res.data[0] if res.data else {}
+
+
+def update(table: str, row_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+    res = db().table(table).update(patch).eq("id", row_id).execute()
+    return res.data[0] if res.data else {}
+
+
+def select(table: str, **filters: Any) -> list[dict[str, Any]]:
+    q = db().table(table).select("*")
+    for k, v in filters.items():
+        q = q.eq(k, v)
+    return q.execute().data or []
+
+
+# ---------- Domain-specific helpers ----------
+
+def is_unsubscribed(email: str) -> bool:
+    if not email:
+        return False
+    res = db().table("unsubscribes").select("id").ilike("email", email).limit(1).execute()
+    return bool(res.data)
+
+
+def add_unsubscribe(email: str, reason: str = "manual") -> None:
+    if not email:
+        return
+    db().table("unsubscribes").upsert({"email": email.lower(), "reason": reason}).execute()
+
+
+def find_prospect_by_website(website: str) -> dict[str, Any] | None:
+    if not website:
+        return None
+    res = (
+        db()
+        .table("prospects")
+        .select("*")
+        .ilike("website", website)
+        .limit(1)
+        .execute()
+    )
+    return res.data[0] if res.data else None
+
+
+def pending_research_prospects(limit: int = 50) -> list[dict[str, Any]]:
+    """Prospects with a website but no research record yet."""
+    res = (
+        db()
+        .table("prospects")
+        .select("*, research(id)")
+        .not_.is_("website", "null")
+        .limit(limit)
+        .execute()
+    )
+    return [p for p in (res.data or []) if not p.get("research")]
+
+
+def outreach_ready_prospects(limit: int = 50) -> list[dict[str, Any]]:
+    """Prospects with research done, score >= 8, email present, no outreach yet."""
+    res = (
+        db()
+        .table("prospects")
+        .select("*, research(*), outreach(id, status)")
+        .gte("score", 8)
+        .not_.is_("email", "null")
+        .limit(limit)
+        .execute()
+    )
+    out = []
+    for p in res.data or []:
+        if not p.get("research"):
+            continue
+        if any(o.get("status") in ("sent", "approved", "queued", "draft") for o in p.get("outreach") or []):
+            continue
+        out.append(p)
+    return out
+
+
+def log(
+    agent: str,
+    level: str,
+    message: str,
+    data: dict[str, Any] | None = None,
+    run_id: str | None = None,
+) -> None:
+    try:
+        db().table("agent_logs").insert(
+            {
+                "run_id": run_id,
+                "agent": agent,
+                "level": level,
+                "message": message,
+                "data": data,
+            }
+        ).execute()
+    except Exception:
+        # Never let logging crash an agent run.
+        pass

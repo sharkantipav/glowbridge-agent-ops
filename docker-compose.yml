@@ -1,0 +1,11 @@
+services:
+  agent-ops:
+    build: .
+    container_name: glowbridge-agent-ops
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    volumes:
+      - ./gmail_token.json:/app/gmail_token.json

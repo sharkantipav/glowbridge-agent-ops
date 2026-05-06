@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>GlowBridge Agent Ops — Admin</title>
+<style>
+  :root { --bg:#0b0d12; --card:#141822; --fg:#e6e9f0; --muted:#8a93a6; --acc:#7c5cff; --warn:#f5b14a; --ok:#56d364; --err:#f17c7c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:18px 24px; border-bottom:1px solid #1f2532; display:flex; align-items:center; justify-content:space-between; }
+  h1 { font-size:18px; margin:0; }
+  main { padding:24px; max-width:1200px; margin:0 auto; }
+  .grid { display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
+  .card { background:var(--card); border:1px solid #1f2532; border-radius:12px; padding:16px; }
+  .card h2 { font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:0 0 8px; }
+  .stat { font-size:28px; font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid #1f2532; vertical-align:top; }
+  th { color:var(--muted); font-weight:500; }
+  tr:last-child td { border-bottom:none; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; }
+  .b-ok { background:rgba(86,211,100,.15); color:var(--ok); }
+  .b-warn { background:rgba(245,177,74,.15); color:var(--warn); }
+  .b-err { background:rgba(241,124,124,.15); color:var(--err); }
+  .b-mute { background:#1f2532; color:var(--muted); }
+  .pill { padding:2px 6px; border-radius:6px; font-size:11px; background:#1f2532; color:var(--muted); }
+  .row-actions button { font:inherit; background:transparent; color:var(--fg); border:1px solid #2a3142; padding:4px 10px; border-radius:6px; cursor:pointer; }
+  .row-actions button.approve { border-color:var(--ok); color:var(--ok); }
+  .row-actions button.reject  { border-color:var(--err); color:var(--err); }
+  details { background:#0f131c; border-radius:6px; padding:6px 10px; }
+  details summary { cursor:pointer; color:var(--muted); }
+  pre { white-space:pre-wrap; word-break:break-word; margin:6px 0 0; font-size:12px; color:#cdd2dc; }
+  section { margin-top:28px; }
+  section h2 { font-size:14px; margin:0 0 10px; color:var(--fg); letter-spacing:.04em; text-transform:uppercase; }
+  .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>GlowBridge Agent Ops</h1>
+  <span class="muted">Admin · last 24h</span>
+</header>
+<main>
+  <div class="grid">
+    <div class="card"><h2>Prospects total</h2><div class="stat">{{ prospect_count }}</div></div>
+    <div class="card"><h2>Customers</h2><div class="stat">{{ customer_count }}</div></div>
+    <div class="card"><h2>Unsubscribes</h2><div class="stat">{{ unsub_count }}</div></div>
+    <div class="card"><h2>Pending approvals</h2><div class="stat">{{ pending_approvals|length }}</div></div>
+  </div>
+
+  <section>
+    <h2>Agent runs (24h)</h2>
+    <div class="card">
+      <table>
+        <thead><tr><th>Agent</th><th>Started</th><th>Completed</th><th>Failed</th></tr></thead>
+        <tbody>
+          {% for agent, b in runs_by_agent.items() %}
+          <tr>
+            <td>{{ agent }}</td>
+            <td><span class="pill">{{ b.get('started', 0) }}</span></td>
+            <td><span class="badge b-ok">{{ b.get('completed', 0) }}</span></td>
+            <td>{% if b.get('failed', 0) %}<span class="badge b-err">{{ b['failed'] }}</span>{% else %}0{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="muted">No runs in the last 24h.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Approval queue</h2>
+    <div class="card">
+      {% if pending_approvals %}
+      <table>
+        <thead><tr><th>Kind</th><th>Reason</th><th>Payload</th><th>Created</th><th></th></tr></thead>
+        <tbody>
+          {% for a in pending_approvals %}
+          <tr>
+            <td><span class="badge b-mute">{{ a.kind }}</span></td>
+            <td>{{ a.reason_for_review }}</td>
+            <td><details><summary>view</summary><pre>{{ a.payload | tojson(indent=2) }}</pre></details></td>
+            <td class="muted">{{ a.created_at }}</td>
+            <td class="row-actions">
+              <button class="approve" data-id="{{ a.id }}" data-action="approve">Approve</button>
+              <button class="reject"  data-id="{{ a.id }}" data-action="reject">Reject</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="muted">No items pending. Good.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  <section>
+    <h2>Recent outreach</h2>
+    <div class="card">
+      <table>
+        <thead><tr><th>Subject</th><th>Status</th><th>Gate failures</th><th>Created</th></tr></thead>
+        <tbody>
+          {% for o in recent_outreach %}
+          <tr>
+            <td>{{ o.subject }}</td>
+            <td>
+              {% if o.status == 'sent' %}<span class="badge b-ok">sent</span>
+              {% elif o.status == 'queued' %}<span class="badge b-warn">queued</span>
+              {% elif o.status == 'blocked' %}<span class="badge b-err">blocked</span>
+              {% elif o.status == 'rejected' %}<span class="badge b-err">rejected</span>
+              {% else %}<span class="badge b-mute">{{ o.status }}</span>{% endif %}
+            </td>
+            <td class="muted">{{ o.gate_failures or '' }}</td>
+            <td class="muted">{{ o.created_at }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="muted">No outreach yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Recent replies</h2>
+    <div class="card">
+      <table>
+        <thead><tr><th>From</th><th>Subject</th><th>Intent</th><th>Conf</th><th>Action</th></tr></thead>
+        <tbody>
+          {% for r in recent_replies %}
+          <tr>
+            <td>{{ r.from_email }}</td>
+            <td>{{ r.subject }}</td>
+            <td><span class="badge b-mute">{{ r.intent }}</span></td>
+            <td class="muted">{{ "%.2f"|format(r.confidence or 0) }}</td>
+            <td>
+              {% if r.auto_replied %}<span class="badge b-ok">auto-replied</span>
+              {% elif r.escalated %}<span class="badge b-warn">escalated</span>
+              {% else %}<span class="badge b-mute">noted</span>{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="muted">No replies yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+  // Approve / Reject buttons. Reads admin token from localStorage; prompts once.
+  document.querySelectorAll('.row-actions button').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id, action = btn.dataset.action;
+      let token = localStorage.getItem('glowbridge_admin_token');
+      if (!token) {
+        token = prompt('Admin token:');
+        if (!token) return;
+        localStorage.setItem('glowbridge_admin_token', token);
+      }
+      const body = action === 'reject' ? { reason: prompt('Reason (optional):') || '' } : {};
+      const res = await fetch(`/admin/approvals/${id}/${action}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) { btn.closest('tr').style.opacity = '0.4'; }
+      else { alert(`Error ${res.status}: ${await res.text()}`); }
+    });
+  });
+</script>
+</body>
+</html>
