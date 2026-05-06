@@ -28,10 +28,42 @@ SCOPES = [
 TOKEN_PATH = Path(os.environ.get("GMAIL_TOKEN_PATH", "gmail_token.json"))
 
 
+def _hydrate_token_from_env() -> None:
+    """If GMAIL_TOKEN_JSON env var is set and the token file isn't present, write it.
+
+    Lets you deploy to Railway/Fly without a persistent volume: run
+    `python -m scripts.gmail_oauth` locally once, base64 (or stringify) the
+    resulting gmail_token.json, and set it as GMAIL_TOKEN_JSON in your host's
+    secret store.
+    """
+    if TOKEN_PATH.exists():
+        return
+    raw = os.environ.get("GMAIL_TOKEN_JSON")
+    if not raw:
+        return
+    # Accept either raw JSON or base64-encoded JSON.
+    try:
+        json.loads(raw)
+        TOKEN_PATH.write_text(raw)
+        return
+    except json.JSONDecodeError:
+        pass
+    try:
+        decoded = base64.b64decode(raw).decode()
+        json.loads(decoded)
+        TOKEN_PATH.write_text(decoded)
+    except Exception:
+        # Don't crash on startup; _credentials() will raise a clearer error.
+        pass
+
+
 def _credentials() -> Credentials:
+    _hydrate_token_from_env()
     if not TOKEN_PATH.exists():
         raise RuntimeError(
-            f"Gmail token not found at {TOKEN_PATH}. Run `python -m scripts.gmail_oauth` once."
+            f"Gmail token not found at {TOKEN_PATH}. Run `python -m scripts.gmail_oauth` once "
+            "locally, then either keep the file alongside the deploy or set GMAIL_TOKEN_JSON "
+            "(raw JSON or base64) as an env var."
         )
     s = get_settings()
     data = json.loads(TOKEN_PATH.read_text())

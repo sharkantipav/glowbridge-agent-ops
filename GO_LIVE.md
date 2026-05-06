@@ -259,21 +259,34 @@ Social auto-post — leave OFF until you've posted 5+ X drafts manually and like
 
 ---
 
-## 12. Where to deploy
+## 12. Deploy to Railway
 
-The backend is cloud-agnostic; pick whichever you're comfortable with:
+`railway.json` and `Procfile` are already in the repo, so the deploy is mostly clicks:
 
-| Option | Why |
-|---|---|
-| **Railway** (recommended for solo) | One-click deploy, persistent disk for `gmail_token.json`, $5/mo. Webhooks just work. |
-| Fly.io | Similar to Railway, slightly more knobs. |
-| Render | Same idea, has free tier for small services (but cold starts hurt cron). |
-| A small VPS + Docker | Most control, more ops. |
+1. Sign up / log in at https://railway.com.
+2. **+ New** → **Deploy from GitHub repo** → pick `sharkantipav/glowbridge-agent-ops`.
+3. Railway autodetects Python via `pyproject.toml`. Wait for the first build to finish (it'll likely fail on missing env vars — that's expected).
+4. Click your service → **Variables** → paste in every value from your local `.env` EXCEPT `GMAIL_TOKEN_JSON` (next step). Tip: Railway has a "Raw Editor" you can paste your `.env` body straight into.
+5. **Gmail token on Railway** — Railway containers don't keep `gmail_token.json` between deploys, so we ship it via env var:
+   ```bash
+   # On your local machine, after running gmail_oauth.py:
+   cat gmail_token.json | base64
+   ```
+   Copy the output and add it as `GMAIL_TOKEN_JSON` in Railway. The backend hydrates the file on startup if it's not present locally.
+6. **Generate a public URL**: Settings → **Networking** → **Generate domain**. You'll get something like `glowbridge-agent-ops-production.up.railway.app`.
+7. Update `APP_BASE_URL` env var to that URL.
+8. Update your Stripe webhook endpoint URL (Stripe Dashboard → Developers → Webhooks → edit endpoint) to `https://YOUR-RAILWAY-DOMAIN/webhooks/stripe`. Copy the new signing secret if it changes — paste into Railway as `STRIPE_WEBHOOK_SECRET`.
+9. Redeploy: Railway redeploys automatically on push, but you can hit **Deploy** manually if needed.
+10. Smoke test from your laptop:
+    ```bash
+    curl https://YOUR-RAILWAY-DOMAIN/
+    # {"ok":true,"service":"glowbridge-agent-ops","version":"0.1.0"}
 
-Whichever you pick:
-- Set every env var via the platform's secret store, not in a committed file.
-- Mount or persist `gmail_token.json` (or move it to Supabase storage if you want it stateless — small follow-up).
-- Point the Stripe webhook endpoint at the deployed URL after the first deploy.
+    curl -X POST https://YOUR-RAILWAY-DOMAIN/runs/prospect \
+      -H "Authorization: Bearer $ADMIN_TOKEN"
+    ```
+
+The APScheduler cron jobs (7am/7:30am/8am/12pm/4pm/6pm America/New_York) run inside the Railway dyno automatically — no separate cron service needed.
 
 ---
 
