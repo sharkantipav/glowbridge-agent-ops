@@ -22,6 +22,24 @@ import httpx
 from app.config import get_settings
 
 VAPI_BASE = "https://api.vapi.ai"
+ACCENT_FRIENDLY_TRANSCRIBER: dict[str, Any] = {
+    "provider": "deepgram",
+    "model": "flux-general-en",
+    "language": "en",
+    "eotThreshold": 0.7,
+    "eotTimeoutMs": 5000,
+}
+
+BALANCED_START_SPEAKING_PLAN: dict[str, Any] = {
+    "waitSeconds": 0.45,
+}
+
+BALANCED_STOP_SPEAKING_PLAN: dict[str, Any] = {
+    "numWords": 1,
+    "voiceSeconds": 0.25,
+    "backoffSeconds": 0.8,
+    "acknowledgementPhrases": ["okay", "ok", "yeah", "yes", "uh-huh", "mm-hmm"],
+}
 DEFAULT_END_MESSAGE = "Thanks — someone from the team will reach out shortly. Have a great day."
 
 
@@ -97,18 +115,32 @@ but everything you tell me goes straight to the team."
 """.strip()
 
 
-def create_assistant(*, company_name: str, call_flow: dict[str, Any], server_url: str | None = None) -> dict[str, Any]:
-    """Create a Vapi assistant from a customer's approved call flow.
+def build_call_quality_patch() -> dict[str, Any]:
+    """Return Vapi settings that improve accent handling and conversational timing."""
+    s = get_settings()
+    return {
+        "transcriber": ACCENT_FRIENDLY_TRANSCRIBER,
+        "startSpeakingPlan": BALANCED_START_SPEAKING_PLAN,
+        "stopSpeakingPlan": BALANCED_STOP_SPEAKING_PLAN,
+        "backgroundSound": "office",
+        "voice": {
+            "provider": s.vapi_voice_provider,
+            "voiceId": s.vapi_voice_id,
+        },
+    }
 
-    Returns the full assistant dict (includes 'id').
-    """
+
+def build_assistant_payload(
+    *, company_name: str, call_flow: dict[str, Any], server_url: str | None = None
+) -> dict[str, Any]:
+    """Build a Vapi assistant payload from a customer's approved call flow."""
     s = get_settings()
     system_prompt = build_system_prompt(company_name, call_flow)
     greeting = (call_flow.get("greeting") or
-                f"Hi, thanks for calling {company_name} — I'm the after-hours assistant.")
+                f"Hi, thanks for calling {company_name} â€” I'm the after-hours assistant.")
 
     payload: dict[str, Any] = {
-        "name": f"GlowBridge — {company_name}",
+        "name": f"GlowBridge â€” {company_name}",
         "firstMessage": greeting,
         "model": {
             "provider": s.vapi_model_provider,
@@ -116,20 +148,30 @@ def create_assistant(*, company_name: str, call_flow: dict[str, Any], server_url
             "messages": [{"role": "system", "content": system_prompt}],
             "temperature": 0.4,
         },
-        "voice": {
-            "provider": s.vapi_voice_provider,
-            "voiceId": s.vapi_voice_id,
-        },
         "endCallMessage": DEFAULT_END_MESSAGE,
         "endCallFunctionEnabled": True,
         "recordingEnabled": True,
         "silenceTimeoutSeconds": 25,
         "maxDurationSeconds": 600,
+        **build_call_quality_patch(),
     }
     if server_url:
         payload["serverUrl"] = server_url
         if s.vapi_webhook_secret:
             payload["serverUrlSecret"] = s.vapi_webhook_secret
+    return payload
+
+
+def create_assistant(*, company_name: str, call_flow: dict[str, Any], server_url: str | None = None) -> dict[str, Any]:
+    """Create a Vapi assistant from a customer's approved call flow.
+
+    Returns the full assistant dict (includes 'id').
+    """
+    payload = build_assistant_payload(
+        company_name=company_name,
+        call_flow=call_flow,
+        server_url=server_url,
+    )
 
     with _client() as c:
         return _post(c, "/assistant", payload)

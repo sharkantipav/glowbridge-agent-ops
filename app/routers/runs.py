@@ -187,6 +187,32 @@ def list_vapi_numbers():
         raise HTTPException(status_code=502, detail={"vapi_status": e.status, "vapi_body": e.body}) from e
 
 
+@router.post("/tune-test-assistant")
+def tune_test_assistant(
+    assistant_id: str = Body(..., embed=True),
+):
+    """Apply the current call-quality settings to an existing Vapi assistant."""
+    from app.integrations import vapi as vapi_int
+
+    patch = vapi_int.build_call_quality_patch()
+    try:
+        assistant = vapi_int.update_assistant(assistant_id, patch)
+    except vapi_int.VapiError as e:
+        raise HTTPException(
+            status_code=502,
+            detail={"vapi_status": e.status, "vapi_body": e.body},
+        ) from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"vapi assistant update failed: {e}") from e
+
+    return {
+        "ok": True,
+        "assistant_id": assistant.get("id", assistant_id),
+        "applied": patch,
+        "instructions": "Call the bound number again and compare recognition, pauses, and voice quality.",
+    }
+
+
 @router.post("/{agent}")
 def run_unknown(agent: str):
     raise HTTPException(status_code=404, detail=f"unknown agent: {agent}")
