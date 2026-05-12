@@ -80,13 +80,31 @@ def run() -> dict:
             if not content:
                 continue
             gate = safety.social_autopost_gate(platform="x", content=content)
+            status = "draft"
+            external_post_id = None
+            if gate.passed and s.enable_social_autopost:
+                try:
+                    from app.integrations import buffer
+
+                    channel_ids = buffer.x_channel_ids()
+                    if not channel_ids:
+                        raise RuntimeError("No active X/Twitter Buffer channel found")
+                    posted = buffer.add_text_post_to_queue(channel_id=channel_ids[0], text=content)
+                    status = "posted"
+                    external_post_id = posted.get("id")
+                    run.info("social_buffer_queued", platform="x", post_id=external_post_id)
+                except Exception as e:  # noqa: BLE001
+                    run.error("social_buffer_post_failed", platform="x", error=str(e))
+
             row = db.insert(
                 "social_posts",
                 {
                     "platform": "x",
                     "content": content,
-                    "status": "draft",
+                    "status": status,
                     "auto_eligible": gate.passed,
+                    "external_post_id": external_post_id,
+                    "posted_at": "now()" if external_post_id else None,
                 },
             )
             generated += 1

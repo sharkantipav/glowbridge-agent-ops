@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     brave_api_key: str | None = None
     tavily_api_key: str | None = None
 
+    # Buffer social publishing
+    buffer_api_token: str | None = None
+    buffer_organization_id: str | None = None
+    buffer_x_channel_ids: str | None = None  # comma-separated override; auto-discovered otherwise
+
     # Admin
     admin_token: str
     operator_email: str = "charles@glowbridge.ai"
