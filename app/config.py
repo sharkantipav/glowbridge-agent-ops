@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     enable_outreach_send: bool = False
     enable_reply_autoreply: bool = False
     enable_social_autopost: bool = False
+    max_outreach_sends_per_day: int = 10
 
 
 @lru_cache

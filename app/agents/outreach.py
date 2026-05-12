@@ -11,6 +11,7 @@ The model is told the rules. The gate enforces them anyway.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from app import db, llm, safety
 from app.agents.base import run_context
@@ -74,9 +75,39 @@ def _send_via_gmail(to: str, subject: str, body: str) -> str:
     return gmail.send_email(to=to, subject=subject, body=body)
 
 
+@dataclass(frozen=True)
+class SendBudget:
+    enabled: bool
+    remaining: int
+    reason: str | None = None
+
+
+def _send_budget(*, max_daily: int, sent_today: int) -> SendBudget:
+    if max_daily <= 0:
+        return SendBudget(enabled=False, remaining=0, reason="daily_outreach_cap_disabled")
+    remaining = max(max_daily - sent_today, 0)
+    if remaining <= 0:
+        return SendBudget(
+            enabled=False,
+            remaining=0,
+            reason=f"daily_outreach_cap_reached ({sent_today}/{max_daily})",
+        )
+    return SendBudget(enabled=True, remaining=remaining)
+
+
 def run(limit: int = 25) -> dict:
     s = get_settings()
-    with run_context("outreach", {"limit": limit, "send_enabled": s.enable_outreach_send}) as run:
+    sent_today = db.count_outreach_sent_today() if s.enable_outreach_send else 0
+    budget = _send_budget(max_daily=s.max_outreach_sends_per_day, sent_today=sent_today)
+    with run_context(
+        "outreach",
+        {
+            "limit": limit,
+            "send_enabled": s.enable_outreach_send,
+            "sent_today": sent_today,
+            "send_budget_remaining": budget.remaining,
+        },
+    ) as run:
         targets = db.outreach_ready_prospects(limit=limit)
         run.info("outreach_targets", count=len(targets))
 
@@ -143,21 +174,24 @@ def run(limit: int = 25) -> dict:
                 continue
 
             # Gate passed
-            if not s.enable_outreach_send:
+            if not s.enable_outreach_send or not budget.enabled or sent >= budget.remaining:
                 # Dry-run: queue for human eyes anyway, with no failure reason.
                 row["status"] = "queued"
                 inserted = db.insert("outreach", row)
+                review_reason = "ENABLE_OUTREACH_SEND=false (dry run)"
+                if s.enable_outreach_send and (not budget.enabled or sent >= budget.remaining):
+                    review_reason = budget.reason or "daily_outreach_cap_reached"
                 db.insert(
                     "approvals",
                     {
                         "kind": "outreach",
                         "target_id": inserted["id"],
                         "payload": {"subject": subject, "body": body, "to": p.get("email")},
-                        "reason_for_review": "ENABLE_OUTREACH_SEND=false (dry run)",
+                        "reason_for_review": review_reason,
                     },
                 )
                 queued += 1
-                run.info("outreach_dry_run_queued", prospect_id=p["id"])
+                run.info("outreach_send_queued", prospect_id=p["id"], reason=review_reason)
                 continue
 
             try:

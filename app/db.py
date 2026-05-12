@@ -6,6 +6,7 @@ HTTP request without an admin check.
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 
@@ -100,6 +101,24 @@ def outreach_ready_prospects(limit: int = 50) -> list[dict[str, Any]]:
             continue
         out.append(p)
     return out
+
+
+def count_outreach_sent_today() -> int:
+    """Count outbound outreach sends since midnight UTC.
+
+    This is a coarse cap. For a cold-outreach safety brake, UTC is good enough:
+    it prevents a deploy/retry loop from sending unbounded emails in one day.
+    """
+    since = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    res = (
+        db()
+        .table("outreach")
+        .select("id", count="exact")
+        .eq("status", "sent")
+        .gte("sent_at", since)
+        .execute()
+    )
+    return int(res.count or 0)
 
 
 def log(
