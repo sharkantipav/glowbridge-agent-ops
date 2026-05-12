@@ -48,8 +48,8 @@ class Settings(BaseSettings):
     vapi_api_key: str | None = None
     vapi_webhook_secret: str | None = None  # optional, for /webhooks/vapi signing
     # Voice + model defaults; override per-customer if needed
-    vapi_voice_provider: str = "11labs"
-    vapi_voice_id: str = "paige"             # less synthetic than sarah in Vapi's 11Labs set
+    vapi_voice_provider: str = "vapi"
+    vapi_voice_id: str = "Clara"             # warm, professional active Vapi voice
     vapi_model_provider: str = "anthropic"
     vapi_model_name: str = "claude-haiku-4-5-20251001"
     # Provider for new phone numbers — "vapi" lets Vapi handle Twilio under the hood.

@@ -30,7 +30,7 @@ def test_assistant_payload_uses_accent_friendly_transcriber_and_turn_taking():
         "acknowledgementPhrases": ["okay", "ok", "yeah", "yes", "uh-huh", "mm-hmm"],
     }
     assert payload["backgroundSound"] == "office"
-    assert payload["voice"]["voiceId"] == "paige"
+    assert payload["voice"] == {"provider": "vapi", "voiceId": "Clara"}
 
 
 def test_call_quality_patch_reuses_production_payload_knobs_without_prompt_overwrite():
@@ -45,4 +45,4 @@ def test_call_quality_patch_reuses_production_payload_knobs_without_prompt_overw
     }
     assert patch["transcriber"]["provider"] == "deepgram"
     assert patch["transcriber"]["model"] == "flux-general-en"
-    assert patch["voice"] == {"provider": "11labs", "voiceId": "paige"}
+    assert patch["voice"] == {"provider": "vapi", "voiceId": "Clara"}
