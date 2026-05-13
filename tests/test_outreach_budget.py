@@ -22,3 +22,7 @@ def test_send_budget_zero_or_negative_disables_sending():
     assert not budget.enabled
     assert budget.remaining == 0
     assert budget.reason == "daily_outreach_cap_disabled"
+
+
+def test_placeholder_email_failures_are_hard_blocks():
+    assert outreach._is_hard_block(["placeholder_email"])

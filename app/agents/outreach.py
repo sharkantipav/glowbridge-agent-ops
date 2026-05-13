@@ -95,6 +95,21 @@ def _send_budget(*, max_daily: int, sent_today: int) -> SendBudget:
     return SendBudget(enabled=True, remaining=remaining)
 
 
+def _is_hard_block(failures: list[str]) -> bool:
+    return any(
+        f.startswith(
+            (
+                "unsubscribed",
+                "banned_phrase",
+                "fabrication",
+                "placeholder_email",
+                "no_reply_email",
+            )
+        )
+        for f in failures
+    )
+
+
 def run(limit: int = 25) -> dict:
     s = get_settings()
     sent_today = db.count_outreach_sent_today() if s.enable_outreach_send else 0
@@ -150,10 +165,7 @@ def run(limit: int = 25) -> dict:
             # Decide outcome
             if not gate.passed:
                 # Hard-block class: unsubscribed, banned phrase, fabrication
-                hard_block = any(
-                    f.startswith(("unsubscribed", "banned_phrase", "fabrication"))
-                    for f in gate.failures
-                )
+                hard_block = _is_hard_block(gate.failures)
                 row["status"] = "blocked" if hard_block else "queued"
                 inserted = db.insert("outreach", row)
                 if hard_block:
