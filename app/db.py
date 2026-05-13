@@ -74,12 +74,14 @@ def pending_research_prospects(limit: int = 50) -> list[dict[str, Any]]:
     res = (
         db()
         .table("prospects")
-        .select("*, research(id)")
+        .select("*, research!left(id)")
         .not_.is_("website", "null")
+        .is_("research.id", "null")
+        .order("created_at", desc=True)
         .limit(limit)
         .execute()
     )
-    return [p for p in (res.data or []) if not p.get("research")]
+    return res.data or []
 
 
 def outreach_ready_prospects(limit: int = 50) -> list[dict[str, Any]]:
