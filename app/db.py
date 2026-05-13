@@ -71,17 +71,36 @@ def find_prospect_by_website(website: str) -> dict[str, Any] | None:
 
 def pending_research_prospects(limit: int = 50) -> list[dict[str, Any]]:
     """Prospects with a website but no research record yet."""
+    candidate_limit = max(limit * 5, limit)
     res = (
         db()
         .table("prospects")
-        .select("*, research!left(id)")
+        .select("*")
         .not_.is_("website", "null")
-        .is_("research.id", "null")
         .order("created_at", desc=True)
-        .limit(limit)
+        .limit(candidate_limit)
         .execute()
     )
-    return res.data or []
+    candidates = res.data or []
+    if not candidates:
+        return []
+
+    prospect_ids = [p["id"] for p in candidates if p.get("id")]
+    research_res = (
+        db()
+        .table("research")
+        .select("prospect_id")
+        .in_("prospect_id", prospect_ids)
+        .execute()
+    )
+    researched_ids = {r["prospect_id"] for r in research_res.data or [] if r.get("prospect_id")}
+    return _unresearched_prospects(candidates, researched_ids, limit)
+
+
+def _unresearched_prospects(
+    candidates: list[dict[str, Any]], researched_ids: set[str], limit: int
+) -> list[dict[str, Any]]:
+    return [p for p in candidates if p.get("id") not in researched_ids][:limit]
 
 
 def outreach_ready_prospects(limit: int = 50) -> list[dict[str, Any]]:

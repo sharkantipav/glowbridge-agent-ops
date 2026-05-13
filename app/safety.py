@@ -96,6 +96,41 @@ def find_fabrications(text: str) -> list[str]:
     return hits
 
 
+PLACEHOLDER_EMAIL_LOCAL_PARTS = {
+    "filler",
+    "example",
+    "test",
+    "testing",
+    "sample",
+    "placeholder",
+}
+RISKY_EMAIL_LOCAL_PARTS = {
+    "noreply",
+    "no-reply",
+    "donotreply",
+    "do-not-reply",
+}
+PLACEHOLDER_EMAIL_DOMAINS = {
+    "example.com",
+    "example.org",
+    "example.net",
+}
+
+
+def email_risk_reason(email: str | None) -> str | None:
+    if not email or "@" not in email:
+        return "missing_email"
+    local, domain = email.lower().strip().rsplit("@", 1)
+    local = local.split("+", 1)[0]
+    if local in PLACEHOLDER_EMAIL_LOCAL_PARTS or domain in PLACEHOLDER_EMAIL_DOMAINS:
+        return "placeholder_email"
+    if local in RISKY_EMAIL_LOCAL_PARTS:
+        return "no_reply_email"
+    if local == "filler" and domain.endswith("godaddy.com"):
+        return "placeholder_email"
+    return None
+
+
 # ---------- Outreach send gate ----------
 
 def outreach_send_gate(
@@ -113,9 +148,10 @@ def outreach_send_gate(
         failures.append(f"score_below_8 (got {score})")
     if not is_pest_control:
         failures.append("not_clearly_pest_control")
-    if not to_email:
-        failures.append("missing_email")
-    elif db.is_unsubscribed(to_email):
+    email_risk = email_risk_reason(to_email)
+    if email_risk:
+        failures.append(email_risk)
+    elif to_email and db.is_unsubscribed(to_email):
         failures.append("unsubscribed")
 
     full = f"{subject}\n{body}"

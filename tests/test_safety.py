@@ -83,6 +83,32 @@ def test_outreach_gate_blocks_missing_email(_):
     assert "missing_email" in g.failures
 
 
+@patch("app.safety.db.is_unsubscribed", return_value=False)
+def test_outreach_gate_blocks_placeholder_email(_):
+    g = safety.outreach_send_gate(
+        body="Hi.",
+        subject="hi",
+        to_email="filler@godaddy.com",
+        score=9,
+        is_pest_control=True,
+    )
+    assert not g.passed
+    assert "placeholder_email" in g.failures
+
+
+@patch("app.safety.db.is_unsubscribed", return_value=False)
+def test_outreach_gate_blocks_no_reply_email(_):
+    g = safety.outreach_send_gate(
+        body="Hi.",
+        subject="hi",
+        to_email="no-reply@company.com",
+        score=9,
+        is_pest_control=True,
+    )
+    assert not g.passed
+    assert "no_reply_email" in g.failures
+
+
 @patch("app.safety.db.is_unsubscribed", return_value=True)
 def test_outreach_gate_blocks_unsubscribed(_):
     g = safety.outreach_send_gate(
