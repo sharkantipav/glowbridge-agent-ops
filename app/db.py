@@ -10,9 +10,8 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 
-from supabase import Client, create_client
-
 from app.config import get_settings
+from supabase import Client, create_client
 
 
 @lru_cache
@@ -55,6 +54,53 @@ def add_unsubscribe(email: str, reason: str = "manual") -> None:
     db().table("unsubscribes").upsert({"email": email.lower(), "reason": reason}).execute()
 
 
+def mark_outreach_bounced(email: str, reason: str = "delivery_failure") -> int:
+    """Mark sent outreach rows for an email as bounced.
+
+    Bounce notifications often arrive from Gmail as separate messages from
+    mailer-daemon/postmaster addresses, so the reply agent extracts the failed
+    recipient and calls this helper. We also add the email to unsubscribes so
+    future prospecting never reuses that address.
+    """
+    if not email:
+        return 0
+    normalized = email.lower().strip()
+    add_unsubscribe(normalized, reason="bounced")
+    prospects = (
+        db()
+        .table("prospects")
+        .select("id")
+        .ilike("email", normalized)
+        .execute()
+        .data
+        or []
+    )
+    prospect_ids = [p["id"] for p in prospects if p.get("id")]
+    if not prospect_ids:
+        return 0
+    rows = (
+        db()
+        .table("outreach")
+        .select("id")
+        .in_("prospect_id", prospect_ids)
+        .eq("status", "sent")
+        .execute()
+        .data
+        or []
+    )
+    outreach_ids = [r["id"] for r in rows if r.get("id")]
+    if not outreach_ids:
+        return 0
+    db().table("outreach").update(
+        {
+            "status": "bounced",
+            "bounced_at": "now()",
+            "gate_failures": [reason],
+        }
+    ).in_("id", outreach_ids).execute()
+    return len(outreach_ids)
+
+
 def find_prospect_by_website(website: str) -> dict[str, Any] | None:
     if not website:
         return None
@@ -63,6 +109,20 @@ def find_prospect_by_website(website: str) -> dict[str, Any] | None:
         .table("prospects")
         .select("*")
         .ilike("website", website)
+        .limit(1)
+        .execute()
+    )
+    return res.data[0] if res.data else None
+
+
+def find_prospect_by_email(email: str | None) -> dict[str, Any] | None:
+    if not email:
+        return None
+    res = (
+        db()
+        .table("prospects")
+        .select("*")
+        .ilike("email", email.lower().strip())
         .limit(1)
         .execute()
     )

@@ -8,7 +8,7 @@ from __future__ import annotations
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app.agents import followup, outreach, prospect, reply, research, social
+from app.agents import digest, followup, outreach, prospect, reply, research, social
 from app.config import get_settings
 from app.logging_setup import get_logger
 
@@ -25,7 +25,7 @@ def _wrap(fn, name: str):
         try:
             result = await asyncio.to_thread(fn)
             log.info("scheduled_run_done", agent=name, result=result)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.error("scheduled_run_failed", agent=name, error=str(e))
     return _run
 
@@ -52,6 +52,8 @@ def start() -> None:
                   CronTrigger(hour=16, minute=0), id="reply_afternoon")
     sched.add_job(_wrap(social.run, "social"),
                   CronTrigger(hour=18, minute=0), id="social_evening")
+    sched.add_job(_wrap(digest.run, "digest"),
+                  CronTrigger(hour=18, minute=30), id="digest_evening")
 
     sched.start()
     _scheduler = sched

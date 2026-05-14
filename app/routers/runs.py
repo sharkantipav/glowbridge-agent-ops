@@ -4,12 +4,10 @@ Useful for testing without waiting for cron.
 """
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from app import db, llm
-from app.agents import outreach, prospect, reply, research, social
+from app.agents import digest, followup, outreach, prospect, reply, research, social
 from app.config import get_settings
 from app.routers.auth_dep import require_admin
 
@@ -31,6 +29,11 @@ def run_outreach(limit: int = 25):
     return outreach.run(limit=limit)
 
 
+@router.post("/followup")
+def run_followup(limit: int = 15):
+    return followup.run(limit=limit)
+
+
 @router.post("/reply")
 def run_reply():
     return reply.run()
@@ -39,6 +42,11 @@ def run_reply():
 @router.post("/social")
 def run_social():
     return social.run()
+
+
+@router.post("/digest")
+def run_digest():
+    return digest.run()
 
 
 @router.post("/create-test-assistant")
