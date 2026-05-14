@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     enable_reply_autoreply: bool = False
     enable_social_autopost: bool = False
     max_outreach_sends_per_day: int = 10
+    max_followup_sends_per_day: int = 5
 
 
 @lru_cache
