@@ -26,3 +26,9 @@ def test_send_budget_zero_or_negative_disables_sending():
 
 def test_placeholder_email_failures_are_hard_blocks():
     assert outreach._is_hard_block(["placeholder_email"])
+
+
+def test_sent_or_blocked_outreach_resolves_pending_approval_state():
+    assert outreach._approval_state_for_outreach_status("sent") == "approved"
+    assert outreach._approval_state_for_outreach_status("blocked") == "rejected"
+    assert outreach._approval_state_for_outreach_status("queued") is None

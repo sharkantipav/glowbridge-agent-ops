@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 
 import tldextract
 
-from app import db, llm
+from app import db, llm, safety
 from app.agents.base import run_context
 from app.integrations import fetch, search
 
@@ -28,22 +28,39 @@ from app.integrations import fetch, search
 QUERIES = [
     "pest control {state} after hours",
     "pest control company {city} {state}",
+    "local exterminator {city} {state} contact",
+    "pest control {city} {state} email",
     "exterminator {state} 24/7",
+    "bed bug exterminator {city} {state}",
     "emergency pest control {state}",
+    "termite control {city} {state}",
     "termite control {state}",
     "rodent control {state}",
 ]
 
 # A handful of seed cities per state to widen geographic spread.
 SEED_CITIES: dict[str, list[str]] = {
-    "NJ": ["Newark", "Jersey City", "Trenton", "Cherry Hill", "Edison", "Toms River"],
-    "NY": ["New York", "Buffalo", "Rochester", "Syracuse", "Albany", "Yonkers"],
-    "PA": ["Philadelphia", "Pittsburgh", "Allentown", "Erie", "Reading", "Scranton"],
-    "CT": ["Bridgeport", "New Haven", "Hartford", "Stamford", "Waterbury"],
+    "NJ": [
+        "Newark", "Jersey City", "Trenton", "Cherry Hill", "Edison", "Toms River",
+        "Paterson", "Elizabeth", "Clifton", "Camden", "Morristown", "Freehold",
+    ],
+    "NY": [
+        "New York", "Buffalo", "Rochester", "Syracuse", "Albany", "Yonkers",
+        "Queens", "Brooklyn", "Long Island", "White Plains", "Poughkeepsie", "Ithaca",
+    ],
+    "PA": [
+        "Philadelphia", "Pittsburgh", "Allentown", "Erie", "Reading", "Scranton",
+        "Lancaster", "Harrisburg", "Bethlehem", "York", "Wilkes-Barre", "West Chester",
+    ],
+    "CT": [
+        "Bridgeport", "New Haven", "Hartford", "Stamford", "Waterbury",
+        "Norwalk", "Danbury", "New Britain", "Meriden", "Middletown",
+    ],
 }
 
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}")
 PHONE_RE = re.compile(r"\(?\b\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}\b")
+CONTACT_PATHS = ("/contact", "/contact-us", "/about", "/about-us")
 
 # Domains we explicitly skip: directories, big franchises, social media, generic.
 SKIP_DOMAIN_FRAGMENTS = {
@@ -74,6 +91,28 @@ def _is_skip_domain(domain: str) -> bool:
 def _normalize_url(url: str) -> str:
     p = urlparse(url)
     return f"{p.scheme or 'https'}://{p.netloc or p.path}".rstrip("/")
+
+
+def _contact_urls_for(url: str) -> list[str]:
+    p = urlparse(_normalize_url(url))
+    if not p.netloc:
+        return []
+    base = f"{p.scheme or 'https'}://{p.netloc}"
+    return [f"{base}{path}" for path in CONTACT_PATHS]
+
+
+def _usable_emails(emails: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for email in emails:
+        cleaned = email.lower().strip(".,;:()[]<>")
+        if cleaned in seen:
+            continue
+        if safety.email_risk_reason(cleaned):
+            continue
+        seen.add(cleaned)
+        out.append(cleaned)
+    return out
 
 
 SCORE_AND_EXTRACT_SYSTEM = """\
@@ -120,7 +159,7 @@ def _candidates_for_state(state: str, per_state: int) -> list[dict[str, str]]:
         for q_tmpl in QUERIES:
             q = q_tmpl.format(state=state, city=city)
             try:
-                results = search.search(q, count=8)
+                results = search.search(q, count=12)
             except Exception:
                 continue
             for r in results:
@@ -142,9 +181,26 @@ def _enrich_one(candidate: dict[str, str]) -> dict | None:
     if not page.text or page.status >= 400:
         return None
 
-    # Pull contact hints from raw text first, give them to the model as priors.
-    emails = list(dict.fromkeys(EMAIL_RE.findall(page.text)))
-    phones = list(dict.fromkeys(PHONE_RE.findall(page.text)))
+    # Pull contact hints from raw text first, then try common contact pages.
+    extra_text = ""
+    raw_emails = EMAIL_RE.findall(page.text)
+    raw_phones = PHONE_RE.findall(page.text)
+    if not _usable_emails(raw_emails):
+        for contact_url in _contact_urls_for(page.url):
+            try:
+                contact_page = fetch.fetch(contact_url)
+            except Exception:
+                continue
+            if not contact_page.text or contact_page.status >= 400:
+                continue
+            extra_text += f"\n\nContact page {contact_page.url}:\n{contact_page.text[:2000]}"
+            raw_emails.extend(EMAIL_RE.findall(contact_page.text))
+            raw_phones.extend(PHONE_RE.findall(contact_page.text))
+            if _usable_emails(raw_emails):
+                break
+
+    emails = _usable_emails(raw_emails)
+    phones = list(dict.fromkeys(raw_phones))
 
     user = (
         f"URL: {page.url}\n"
@@ -153,7 +209,7 @@ def _enrich_one(candidate: dict[str, str]) -> dict | None:
         f"Seed city (from search): {candidate['city']}\n"
         f"Emails detected: {emails[:5]}\n"
         f"Phones detected: {phones[:5]}\n"
-        f"Page text (truncated):\n{page.text[:6000]}"
+        f"Page text (truncated):\n{(page.text + extra_text)[:7000]}"
     )
     try:
         result = llm.json_call(

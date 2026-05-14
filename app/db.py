@@ -118,10 +118,36 @@ def outreach_ready_prospects(limit: int = 50) -> list[dict[str, Any]]:
     for p in res.data or []:
         if not p.get("research"):
             continue
-        if any(o.get("status") in ("sent", "approved", "queued", "draft") for o in p.get("outreach") or []):
+        if _has_existing_outreach(p.get("outreach") or []):
             continue
         out.append(p)
     return out
+
+
+def _has_existing_outreach(outreach_rows: list[dict[str, Any]]) -> bool:
+    return bool(outreach_rows)
+
+
+def queued_outreach_to_send(limit: int = 25) -> list[dict[str, Any]]:
+    """Clean queued outreach rows that can be retried under today's send budget.
+
+    The outreach agent uses `queued` for two very different cases:
+    - safe emails paused because the daily cap was reached (gate_failures is null)
+    - emails requiring human review (gate_failures is not null)
+
+    Only the first category should auto-send on a later day.
+    """
+    res = (
+        db()
+        .table("outreach")
+        .select("*, prospects(email, score, company_name)")
+        .eq("status", "queued")
+        .is_("gate_failures", "null")
+        .order("created_at")
+        .limit(limit)
+        .execute()
+    )
+    return res.data or []
 
 
 def count_outreach_sent_today() -> int:

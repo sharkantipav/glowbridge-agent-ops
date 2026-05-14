@@ -110,6 +110,78 @@ def _is_hard_block(failures: list[str]) -> bool:
     )
 
 
+def _approval_state_for_outreach_status(status: str) -> str | None:
+    if status == "sent":
+        return "approved"
+    if status in {"blocked", "bounced", "rejected"}:
+        return "rejected"
+    return None
+
+
+def _sync_outreach_approval(outreach_id: str, status: str) -> None:
+    state = _approval_state_for_outreach_status(status)
+    if not state:
+        return
+    db.db().table("approvals").update(
+        {"state": state, "decided_by": "system", "decided_at": "now()"}
+    ).eq("kind", "outreach").eq("target_id", outreach_id).eq("state", "pending").execute()
+
+
+def _send_queued_under_budget(budget: SendBudget, already_sent_this_run: int, run) -> int:
+    if not budget.enabled or already_sent_this_run >= budget.remaining:
+        return 0
+
+    sent = 0
+    remaining = budget.remaining - already_sent_this_run
+    for row in db.queued_outreach_to_send(limit=remaining):
+        prospect = row.get("prospects") or {}
+        gate = safety.outreach_send_gate(
+            body=row.get("body") or "",
+            subject=row.get("subject") or "",
+            to_email=prospect.get("email"),
+            score=prospect.get("score"),
+            is_pest_control=True,
+        )
+        if not gate.passed:
+            status = "blocked" if _is_hard_block(gate.failures) else "queued"
+            patch = {"gate_failures": gate.failures}
+            if status == "blocked":
+                patch["status"] = "blocked"
+            db.db().table("outreach").update(patch).eq("id", row["id"]).execute()
+            _sync_outreach_approval(row["id"], status)
+            run.warn(
+                "queued_outreach_blocked",
+                outreach_id=row["id"],
+                prospect_id=row.get("prospect_id"),
+                failures=gate.failures,
+            )
+            continue
+
+        try:
+            msg_id = _send_via_gmail(
+                to=prospect["email"],
+                subject=row["subject"],
+                body=row["body"],
+            )
+            db.db().table("outreach").update(
+                {"status": "sent", "gmail_message_id": msg_id, "sent_at": "now()"}
+            ).eq("id", row["id"]).execute()
+            _sync_outreach_approval(row["id"], "sent")
+            sent += 1
+            run.info(
+                "queued_outreach_sent",
+                outreach_id=row["id"],
+                prospect_id=row.get("prospect_id"),
+                gmail_id=msg_id,
+            )
+        except Exception as e:
+            db.db().table("outreach").update(
+                {"gate_failures": [f"send_failed: {e}"]}
+            ).eq("id", row["id"]).execute()
+            run.error("queued_outreach_send_failed", outreach_id=row["id"], error=str(e))
+    return sent
+
+
 def run(limit: int = 25) -> dict:
     s = get_settings()
     sent_today = db.count_outreach_sent_today() if s.enable_outreach_send else 0
@@ -131,7 +203,12 @@ def run(limit: int = 25) -> dict:
         blocked = 0
         skipped = 0
 
+        if s.enable_outreach_send:
+            sent += _send_queued_under_budget(budget, sent, run)
+
         for p in targets:
+            if s.enable_outreach_send and sent >= budget.remaining:
+                break
             research_rows = p.get("research") or []
             if not research_rows:
                 skipped += 1
