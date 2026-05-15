@@ -31,17 +31,35 @@ def _pending_approvals_count() -> int:
     return int(res.count or 0)
 
 
-def _recent_replies(limit: int = 5) -> list[dict]:
+def _is_known_prospect_reply(reply: dict) -> bool:
+    return bool(db.find_prospect_by_email(reply.get("from_email")))
+
+
+def _replies_since(since: str) -> list[dict]:
     return (
         db.db()
         .table("replies")
         .select("from_email,subject,intent,confidence,created_at")
+        .gte("created_at", since)
         .order("created_at", desc=True)
-        .limit(limit)
         .execute()
         .data
         or []
     )
+
+
+def _recent_replies(limit: int = 5) -> list[dict]:
+    rows = (
+        db.db()
+        .table("replies")
+        .select("from_email,subject,intent,confidence,created_at")
+        .order("created_at", desc=True)
+        .limit(limit * 10)
+        .execute()
+        .data
+        or []
+    )
+    return [r for r in rows if _is_known_prospect_reply(r)][:limit]
 
 
 def _format_digest(metrics: dict, replies: list[dict], admin_url: str) -> str:
@@ -84,14 +102,16 @@ def run() -> dict:
     admin_url = f"{s.app_base_url.rstrip('/')}/admin"
 
     with run_context("digest", {"since": since}) as run:
+        prospect_replies_today = [r for r in _replies_since(since) if _is_known_prospect_reply(r)]
         metrics = {
             "prospects_added": _count_since("prospects", "created_at", since),
             "researched": _count_since("research", "created_at", since),
             "sent": _count_since("outreach", "sent_at", since, status="sent"),
             "bounced": _count_since("outreach", "bounced_at", since, status="bounced"),
-            "replies": _count_since("replies", "created_at", since),
-            "hot_replies": _count_since("replies", "created_at", since, intent="interested")
-            + _count_since("replies", "created_at", since, intent="wants_call"),
+            "replies": len(prospect_replies_today),
+            "hot_replies": sum(
+                1 for r in prospect_replies_today if r.get("intent") in {"interested", "wants_call"}
+            ),
             "pending_approvals": _pending_approvals_count(),
         }
         replies = _recent_replies()
